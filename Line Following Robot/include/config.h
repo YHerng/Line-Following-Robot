@@ -66,6 +66,6 @@
 // 7. TIMING AND DIAGNOSTICS
 // ===========================================================================
 #define LOOP_INTERVAL_MS  5      // control loop period in milliseconds
-#define SERIAL_BAUD       115200 // UNO Q RouterBridge default; native UART on AVR
+#define SERIAL_BAUD       115200 // serial monitor speed
 #define ENABLE_SERIAL     1      // set to 0 to remove all Serial traffic
 #define DEBUG_SENSORS     0      // set to 1 to print the 5-bit sensor pattern

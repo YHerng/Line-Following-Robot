@@ -12,8 +12,7 @@
  *   - L298N dual H-bridge motor driver
  *   - 1 hobby servo, actuated once when the all-black stop marker is reached
  *
- * Note for the Arduino UNO Q: the header pins are 3.3 V logic and are NOT
- * 5 V tolerant. See the repository README before wiring 5 V modules.
+ * Target board: Arduino Uno (5 V logic).
  */
 
 #include <Servo.h>

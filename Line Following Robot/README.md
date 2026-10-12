@@ -1,7 +1,7 @@
 # Line Following Robot (PlatformIO project)
 
 PlatformIO build for the 5-channel IR line follower. Full documentation,
-including the wiring diagram and the 3.3 V safety warning, lives in the
+including the wiring diagram and power notes, lives in the
 [repository README](../README.md).
 
 ## Structure
@@ -14,26 +14,18 @@ including the wiring diagram and the 3.3 V safety warning, lives in the
 | `lib/` | Project-private libraries (unused) |
 | `test/` | PlatformIO unit tests (unused) |
 
-## Environments
+## Board
 
-| Environment | Board | Notes |
-|-------------|-------|-------|
-| `uno_q` (default) | Arduino UNO Q | Builds **only on Linux**; use remote builds from Windows/macOS |
-| `uno` | Classic Arduino Uno | Builds anywhere; useful for bench testing |
+Arduino Uno (`atmelavr` platform), environment `uno`.
 
 ## Commands
 
 ```bash
-# UNO Q - run on the board / a Linux host
-pio run
-pio run -t upload
-pio device monitor -e uno_q
+pio run -t upload          # build and flash
+pio device monitor         # watch the serial output
 
-# From Windows or macOS - build on the board
-pio remote run -r -t upload
-
-# Classic Uno - builds locally on any OS
-pio run -e uno -t upload
+# pick a specific board if several are attached
+pio run -t upload --upload-port COM5
 ```
 
 ## Configuration

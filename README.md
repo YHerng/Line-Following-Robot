@@ -1,6 +1,6 @@
 # Line Following Robot
 
-A 5-channel IR line follower built around the **Arduino UNO Q**, an **L298N**
+A 5-channel IR line follower built around the **Arduino Uno**, an **L298N**
 dual H-bridge motor driver, and a hobby **servo** that actuates a mechanism when
 the robot reaches an all-black stop marker.
 
@@ -16,7 +16,7 @@ far off-centre the line is, and stops at the end of the track.
 - [Hardware](#hardware)
 - [Pin map](#pin-map)
 - [Wiring](#wiring)
-- [3.3 V logic warning](#33-v-logic-warning)
+- [Power notes](#power-notes)
 - [Building and uploading](#building-and-uploading)
 - [How it works](#how-it-works)
 - [Tuning](#tuning)
@@ -69,7 +69,7 @@ the one to extend, because the hardware configuration is separated into
 
 | Qty | Part | Notes |
 |----:|------|-------|
-| 1 | Arduino UNO Q | Target board (2 GB/16 GB or 4 GB/32 GB variant) |
+| 1 | Arduino Uno | Target board (or a compatible clone) |
 | 1 | L298N dual H-bridge module | Motor driver |
 | 2 | DC gear motors | With wheels |
 | 1 | 5-channel IR line sensor array | Digital outputs |
@@ -80,8 +80,8 @@ the one to extend, because the hardware configuration is separated into
 
 ### Pin map
 
-| Function | UNO Q pin | Notes |
-|----------|-----------|-------|
+| Function | Arduino pin | Notes |
+|----------|-------------|-------|
 | Left motor enable (ENA) | `D3` | PWM capable |
 | Left motor direction (IN1) | `D13` | |
 | Left motor direction (IN2) | `D10` | |
@@ -102,7 +102,7 @@ All pin assignments live in [`Line Following Robot/include/config.h`](Line%20Fol
 ## Wiring
 
 ```
-                    Arduino UNO Q
+                     Arduino Uno
                  ┌───────────────┐
    L298N ENA ────┤ D3            │
    L298N IN1 ────┤ D13           │
@@ -119,87 +119,66 @@ All pin assignments live in [`Line Following Robot/include/config.h`](Line%20Fol
                   │               │
   Servo sig ─────┤ D9            │
                   │               │
-   Battery + ────┤ VIN  (7–24 V)  │
+   Battery + ────┤ VIN  (7–12 V)  │
    Battery − ────┤ GND           │
                  └───────────────┘
 ```
 
-**Power and ground**
+**Connections**
 
-- Motors and the L298N are powered from the battery pack; the UNO Q's `VIN`
-  accepts **7–24 V**.
+- Motors and the L298N are powered from the battery pack; feed the battery into
+  the Uno's `VIN` (7–12 V recommended) or power the Uno separately over USB.
 - Tie every ground together: battery −, L298N `GND`, sensor `GND`, servo `GND`,
-  and the UNO Q `GND`.
-- Power the **servo from a separate 5 V supply**, not from the board's 3.3 V
-  rail — a stalling servo can draw well over 1 A and will brown out the MCU.
+  and the Uno `GND`.
 - L298N outputs `OUT1/OUT2` drive the left motor, `OUT3/OUT4` the right motor.
+- If you feed 12 V into the L298N, remove its onboard 5 V jumper and power the
+  driver's logic side from the Uno's 5 V pin instead.
 
 ---
 
-## 3.3 V logic warning
+## Power notes
 
-> **Important.** The UNO Q's header pins are **3.3 V logic and are NOT 5 V
-> tolerant**. This is
-the single biggest difference from a classic Uno, and it matters here:
+The Uno runs on **5 V logic**, so the L298N and typical 5 V IR modules are a
+natural match — no level shifting needed.
 
-- Many 5-channel IR modules and most L298N boards are designed for 5 V logic.
-  Driving a 5 V signal into a UNO Q GPIO can damage the STM32U585.
-- Use 3.3 V-compatible sensors, or level-shift the sensor outputs down to 3.3 V.
-- The L298N's `5V` output is a 5 V rail — do **not** feed it into any UNO Q
-  input pin.
-- `A0`/`A1` are direct ADC inputs with an absolute maximum of about 3.6 V.
+A few things that will save you a debugging session:
 
-If you are unsure, measure the sensor outputs with a multimeter (with the
-sensors powered) before connecting them to the board.
+- **Never power the motors from the Uno's 5 V pin.** They draw far more current
+  than the onboard regulator can supply. Use the battery pack through the L298N.
+- **Power the servo from a separate 5 V supply**, not from the board. A stalling
+  servo can draw well over 1 A and will brown out the MCU, causing random
+  resets. Share the ground.
+- **Common ground is mandatory.** If the Uno, L298N and sensors do not share a
+  ground, the sensor readings will be nonsense.
+- If you are using a clone Uno with a CH340 USB chip, you may need to install a
+  driver before the board appears as a serial port.
 
 ---
 
 ## Building and uploading
 
-### PlatformIO – UNO Q (recommended)
-
-The UNO Q has **no official PlatformIO support**. This project uses the
-community platform [`lee-lab-skku/arduinoq`](https://github.com/lee-lab-skku/platform-arduinoq),
-which `platformio.ini` already points at, so PlatformIO fetches it on first use.
-
-> **The UNO Q firmware can only be *built* on Linux.** The platform's toolchain
-> and framework packages are Linux-only. On Windows or macOS you must build on
-> the board itself (see [remote builds](#building-from-windows-or-macos)).
-
-On the board (over SSH, or in an editor session attached to the board):
+### PlatformIO (recommended)
 
 ```bash
 cd "Line Following Robot"
-pio run                 # build
-pio run -t upload       # build and flash
-pio device monitor -e uno_q   # watch the serial output
+pio run -t upload        # build and flash
+pio device monitor       # watch the serial output
 ```
 
-### Building from Windows or macOS
+The environment is named `uno` and is the default, so no `-e` flag is needed.
+PlatformIO fetches the AVR toolchain and the Servo library on first run.
 
-Use PlatformIO's remote mode with `--force-remote` so the whole build runs on
-the board:
-
-```bash
-pio remote run -r -t upload
-pio remote device monitor -e uno_q
-```
-
-### Classic Arduino Uno (bench testing)
-
-A second environment builds the same source for a normal 5 V Uno/Nano — useful
-for testing the logic without an UNO Q. This one builds locally on any OS:
+If you have more than one board attached, specify the port:
 
 ```bash
-cd "Line Following Robot"
-pio run -e uno -t upload
+pio run -t upload --upload-port COM5            # Windows
+pio run -t upload --upload-port /dev/ttyUSB0    # Linux
 ```
 
 ### Arduino IDE
 
-Open `MAIN_CODE.ino` directly. For the UNO Q, install the Arduino UNO Q board
-package in the Boards Manager and select **Arduino UNO Q**; for a classic Uno,
-just select **Arduino Uno**. The sketch is fully self-contained.
+Open `MAIN_CODE.ino` directly, select **Arduino Uno** as the board and the
+correct serial port, then upload. The sketch is fully self-contained.
 
 ---
 
@@ -268,9 +247,9 @@ Every constant lives in [`Line Following Robot/include/config.h`](Line%20Followi
 | Robot spins in place | One motor polarity is inverted. Set the matching `INVERT_*` flag. |
 | Robot steers away from the line | Sensors read inverted – change `SENSOR_ACTIVE_LEVEL`. |
 | Servo twitches / board resets when the servo moves | Servo is drawing too much current – give it its own 5 V supply and a common ground. |
-| No serial output on the UNO Q | `Serial` needs the RouterBridge library (already in `platformio.ini`) and `arduino-router.service` running on the MPU. |
-| `pio run` fails immediately on Windows/macOS | Expected – the UNO Q platform builds only on Linux. Use `pio remote run -r -t upload`. |
-| Build fails on `#include <Servo.h>` | Ensure `arduino-libraries/Servo` is at **1.3.0 or newer** – that is the first release with UNO Q / Zephyr support. |
+| Sensors give random readings | Missing common ground, or the sensors sit too far from the surface – adjust their height or the sensitivity trimmers. |
+| Nothing on the serial monitor | Baud-rate mismatch – the sketch uses 115200. |
+| Upload fails / no port listed | Wrong port selected, or a missing CH340 driver on clone boards. |
 
 ---
 
