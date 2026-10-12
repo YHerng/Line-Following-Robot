@@ -1,193 +1,223 @@
+/**
+ * Line Following Robot - single-file Arduino IDE sketch
+ * ===========================================================================
+ *
+ * This is the standalone version of the firmware, for pasting straight into
+ * the Arduino IDE. The equivalent, modular PlatformIO build lives in
+ * "Line Following Robot/src/main.cpp" + "Line Following Robot/include/config.h"
+ * and behaves identically.
+ *
+ * Hardware:
+ *   - 5-channel IR line sensor array (digital outputs)
+ *   - L298N dual H-bridge motor driver
+ *   - 1 hobby servo, actuated once when the all-black stop marker is reached
+ *
+ * Note for the Arduino UNO Q: the header pins are 3.3 V logic and are NOT
+ * 5 V tolerant. See the repository README before wiring 5 V modules.
+ */
+
 #include <Servo.h>
 
-// ==========================================
+// ===========================================================================
 // PIN DEFINITIONS
-// ==========================================
+// ===========================================================================
 
 // L298N Left Motor Pins
-const int ENA = 3;    // Digital Pin for Enable A
-const int IN1 = 13;   // Direction pin 1
-const int IN2 = 10;   // Direction pin 2
+const int ENA = 3;    // Left  motor enable
+const int IN1 = 13;   // Left  motor direction A
+const int IN2 = 10;   // Left  motor direction B
 
 // L298N Right Motor Pins
-const int ENB = 5;    // Digital Pin for Enable B
-const int IN3 = 4;    // Direction pin 1
-const int IN4 = 2;    // Direction pin 2
+const int ENB = 5;    // Right motor enable
+const int IN3 = 4;    // Right motor direction A
+const int IN4 = 2;    // Right motor direction B
 
 // 5-Channel IR Sensor Pins
-const int SENSOR_FAR_LEFT   = 12;
-const int SENSOR_LEFT       = 11;
-const int SENSOR_CENTER     = 8;
-const int SENSOR_RIGHT      = 7;
-const int SENSOR_FAR_RIGHT  = 6;
+const int SENSOR_FAR_LEFT  = 12;
+const int SENSOR_LEFT      = 11;
+const int SENSOR_CENTER    = 8;
+const int SENSOR_RIGHT     = 7;
+const int SENSOR_FAR_RIGHT = 6;
 
 // Servo Pin
 const int SERVO_PIN = 9;
 
-// ==========================================
+// ===========================================================================
 // CONSTANTS & OBJECTS
-// ==========================================
+// ===========================================================================
+
 Servo myServo;
 
-// Sensor Logic Value for BLACK line (Active LOW for standard IR arrays)
-const int BLACK_LINE = HIGH; 
+// Electrical level reported by a sensor sitting over the BLACK line.
+// Most IR arrays pull LOW on black; change to HIGH if yours read inverted.
+const int SENSOR_ACTIVE_LEVEL = HIGH;
 
-// FLAG TO PREVENT REPEATED SERVO ACTUATION
-bool servoExecuted = false; 
+// Servo geometry and timing
+const int SERVO_MIN_US     = 544;
+const int SERVO_MAX_US     = 2400;
+const int SERVO_NEUTRAL    = 0;
+const int SERVO_ACTUATE    = 45;
+const unsigned long SERVO_HOLD_MS = 500;
+
+const unsigned long LOOP_INTERVAL_MS = 5;
+
+// Motor polarity: flip to true if a wheel turns the wrong way.
+const bool INVERT_LEFT_MOTOR  = false;
+const bool INVERT_RIGHT_MOTOR = false;
+
+// ===========================================================================
+// STATE
+// ===========================================================================
+
+enum MotorCmd { MOTOR_STOP, MOTOR_FORWARD, MOTOR_REVERSE };
+
+enum ServoPhase { SERVO_IDLE, SERVO_AT_TARGET, SERVO_RETURNING };
+
+ServoPhase servoPhase = SERVO_IDLE;
+unsigned long servoPhaseStart = 0;
+bool servoArmed = true;             // re-armed whenever we leave the marker
+
+unsigned long lastLoop = 0;
+
+// ===========================================================================
+// MOTOR HELPERS
+// ===========================================================================
+
+void applyMotor(int enPin, int inA, int inB, MotorCmd cmd, bool invert) {
+  if (cmd == MOTOR_STOP) {
+    digitalWrite(enPin, LOW);
+    digitalWrite(inA, LOW);
+    digitalWrite(inB, LOW);
+    return;
+  }
+
+  digitalWrite(enPin, HIGH);
+  bool forward = (cmd == MOTOR_FORWARD) ^ invert;
+  digitalWrite(inA, forward ? HIGH : LOW);
+  digitalWrite(inB, forward ? LOW  : HIGH);
+}
+
+void drive(MotorCmd left, MotorCmd right) {
+  applyMotor(ENA, IN1, IN2, left,  INVERT_LEFT_MOTOR);
+  applyMotor(ENB, IN3, IN4, right, INVERT_RIGHT_MOTOR);
+}
+
+void stopMotors() {
+  drive(MOTOR_STOP, MOTOR_STOP);
+}
+
+// ===========================================================================
+// SERVO (non-blocking sweep)
+// ===========================================================================
+
+void servoUpdate(unsigned long now) {
+  if (servoPhase == SERVO_AT_TARGET && now - servoPhaseStart >= SERVO_HOLD_MS) {
+    myServo.write(SERVO_NEUTRAL);
+    servoPhase = SERVO_RETURNING;
+    servoPhaseStart = now;
+  } else if (servoPhase == SERVO_RETURNING && now - servoPhaseStart >= SERVO_HOLD_MS) {
+    servoPhase = SERVO_IDLE;
+  }
+}
+
+void servoTrigger(unsigned long now) {
+  if (servoPhase != SERVO_IDLE) {
+    return;
+  }
+  myServo.write(SERVO_ACTUATE);
+  servoPhase = SERVO_AT_TARGET;
+  servoPhaseStart = now;
+}
+
+// ===========================================================================
+// SETUP
+// ===========================================================================
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
-  // Initialize L298N Motor Pins
   pinMode(ENA, OUTPUT);
   pinMode(ENB, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
+  stopMotors();
 
-  // Initialize IR Sensor Pins
-  pinMode(SENSOR_FAR_LEFT, INPUT);
-  pinMode(SENSOR_LEFT, INPUT);
-  pinMode(SENSOR_CENTER, INPUT);
-  pinMode(SENSOR_RIGHT, INPUT);
+  pinMode(SENSOR_FAR_LEFT,  INPUT);
+  pinMode(SENSOR_LEFT,      INPUT);
+  pinMode(SENSOR_CENTER,    INPUT);
+  pinMode(SENSOR_RIGHT,     INPUT);
   pinMode(SENSOR_FAR_RIGHT, INPUT);
 
-  // Attach Servo
-  myServo.attach(SERVO_PIN, 544, 2400);
-  myServo.write(0); // Default neutral position
+  myServo.attach(SERVO_PIN, SERVO_MIN_US, SERVO_MAX_US);
+  myServo.write(SERVO_NEUTRAL);
 
   Serial.println("==================================");
-  Serial.println("  Line Follower Logic & Circuit Test");
+  Serial.println("  Line Following Robot - ready");
   Serial.println("==================================");
+
+  lastLoop = millis();
 }
+
+// ===========================================================================
+// MAIN LOOP
+// ===========================================================================
 
 void loop() {
-  // Read digital state of all 5 IR sensors
-  int sFarLeft  = digitalRead(SENSOR_FAR_LEFT);
-  int sLeft     = digitalRead(SENSOR_LEFT);
-  int sCenter   = digitalRead(SENSOR_CENTER);
-  int sRight    = digitalRead(SENSOR_RIGHT);
-  int sFarRight = digitalRead(SENSOR_FAR_RIGHT);
+  unsigned long now = millis();
 
-  // -------------------------------------------------------------
-  // CONDITIONAL LOGIC
-  // -------------------------------------------------------------
+  servoUpdate(now);
 
-  // Condition 1: ALL sensors detect WHITE -> Stop motors completely
-  if (sFarLeft != BLACK_LINE && sLeft != BLACK_LINE && sCenter != BLACK_LINE && sRight != BLACK_LINE && sFarRight != BLACK_LINE) {
-    Serial.println("Action: ALL WHITE ground detected -> Motors STOPPED");
-    servoExecuted = false; 
-    stopMotors();
+  if (now - lastLoop < LOOP_INTERVAL_MS) {
+    return;
   }
+  lastLoop = now;
 
-  // Condition 2: ALL sensors detect BLACK -> Stop motors & sweep servo ONCE
-  else if (sFarLeft == BLACK_LINE && sLeft == BLACK_LINE && sCenter == BLACK_LINE && sRight == BLACK_LINE && sFarRight == BLACK_LINE) {
+  bool farLeft  = (digitalRead(SENSOR_FAR_LEFT)  == SENSOR_ACTIVE_LEVEL);
+  bool left     = (digitalRead(SENSOR_LEFT)      == SENSOR_ACTIVE_LEVEL);
+  bool center   = (digitalRead(SENSOR_CENTER)    == SENSOR_ACTIVE_LEVEL);
+  bool right    = (digitalRead(SENSOR_RIGHT)     == SENSOR_ACTIVE_LEVEL);
+  bool farRight = (digitalRead(SENSOR_FAR_RIGHT) == SENSOR_ACTIVE_LEVEL);
+
+  bool allBlack = farLeft && left && center && right && farRight;
+  bool anyBlack = farLeft || left || center || right || farRight;
+
+  // --- Stop marker: halt and actuate the servo exactly once -------------
+  if (allBlack) {
     stopMotors();
-    
-    if (!servoExecuted) {
-      Serial.println("Action: ALL BLACK marker detected -> Actuating Servo ONCE");
-      
-      myServo.write(45);
-      delay(500);
-      myServo.write(0);
-      delay(500);
-      
-      servoExecuted = true; 
-    } else {
-      Serial.println("Action: ALL BLACK -> Waiting on stop line (Servo already actuated)");
+    if (servoArmed) {
+      servoTrigger(now);
+      servoArmed = false;
+      Serial.println("ALL BLACK  -> stop line, servo actuated");
     }
+    return;
   }
 
-  // Condition 3: FAR LEFT sensor detects black -> Sharp Left Pivot (Right forward, Left REVERSE)
-  else if (sFarLeft == BLACK_LINE) {
-    Serial.println("Action: FAR LEFT sensor black -> Sharp Left Pivot (Right forward, Left reverse)");
-    servoExecuted = false;
-    setMotorLeft(true, false);   // Reverse left motor
-    setMotorRight(true, false);   // Forward right motor
-    Serial.print("FarLeft: "); Serial.print(sFarLeft);
-    Serial.print(" | Left: "); Serial.println(sLeft);
-  }
+  // Off the marker -> re-arm the servo for the next stop line.
+  servoArmed = true;
 
-  // Condition 4: FAR RIGHT sensor detects black -> Sharp Right Pivot (Left forward, Right REVERSE)
-  else if (sFarRight == BLACK_LINE) {
-    Serial.println("Action: FAR RIGHT sensor black -> Sharp Right Pivot (Left forward, Right reverse)");
-    servoExecuted = false;
-    setMotorLeft(true, true);    // Forward left motor
-    setMotorRight(true, true);  // Reverse right motor
-  }
-
-  // Condition 5: LEFT sensor detects black -> Gentle Turn Right Motor Only
-  else if (sLeft == BLACK_LINE && sFarLeft != BLACK_LINE) {
-    Serial.println("Action: LEFT sensor black -> Turn Right motor forward, Left stopped");
-    servoExecuted = false;
-    setMotorLeft(false, true);   // Stop left motor
-    setMotorRight(true, true);   // Forward right motor
-    Serial.print("FarLeft: "); Serial.print(sFarLeft);
-    Serial.print(" | Left: "); Serial.println(sLeft);
-  }
-
-  // Condition 6: RIGHT sensor detects black -> Gentle Turn Left Motor Only
-  else if (sRight == BLACK_LINE && sFarRight != BLACK_LINE) {
-    Serial.println("Action: RIGHT sensor black -> Turn Left motor forward, Right stopped");
-    servoExecuted = false;
-    setMotorLeft(true, true);    // Forward left motor
-    setMotorRight(false, true);  // Stop right motor
-  }
-
-  // Condition 7: CENTER sensor detects black -> Move Straight
-  else if (sCenter == BLACK_LINE) {
-    Serial.println("Action: CENTER sensor black -> Move Straight");
-    servoExecuted = false;
-    moveForward();
-  }
-
-  // Fallback
-  else {
-    Serial.println("Action: Fallback -> Stop motors");
-    servoExecuted = false;
+  // --- Steering ---------------------------------------------------------
+  if (!anyBlack) {
     stopMotors();
-  }
-
-  delay(50); // Small loop delay for stability
-}
-
-// ==========================================
-// MOTOR CONTROL HELPER FUNCTIONS (DIGITAL)
-// ==========================================
-
-void setMotorLeft(bool enable, bool forward) {
-  digitalWrite(ENA, enable ? HIGH : LOW);
-  if (forward) {
-    digitalWrite(IN1, HIGH);
-    digitalWrite(IN2, LOW);
+    Serial.println("ALL WHITE  -> line lost, stopped");
+  } else if (farLeft) {
+    drive(MOTOR_REVERSE, MOTOR_FORWARD);   // sharp left pivot
+    Serial.println("FAR LEFT   -> sharp left pivot");
+  } else if (farRight) {
+    drive(MOTOR_FORWARD, MOTOR_REVERSE);   // sharp right pivot
+    Serial.println("FAR RIGHT  -> sharp right pivot");
+  } else if (left) {
+    drive(MOTOR_STOP, MOTOR_FORWARD);      // gentle left turn
+    Serial.println("LEFT       -> gentle left turn");
+  } else if (right) {
+    drive(MOTOR_FORWARD, MOTOR_STOP);      // gentle right turn
+    Serial.println("RIGHT      -> gentle right turn");
+  } else if (center) {
+    drive(MOTOR_FORWARD, MOTOR_FORWARD);   // straight
+    Serial.println("CENTER     -> straight");
   } else {
-    digitalWrite(IN1, LOW);
-    digitalWrite(IN2, HIGH);
+    stopMotors();
+    Serial.println("FALLBACK   -> stopped");
   }
-}
-
-void setMotorRight(bool enable, bool forward) {
-  digitalWrite(ENB, enable ? HIGH : LOW);
-  if (forward) {
-    digitalWrite(IN3, HIGH);
-    digitalWrite(IN4, LOW);
-  } else {
-    digitalWrite(IN3, LOW);
-    digitalWrite(IN4, HIGH);
-  }
-}
-
-void moveForward() {
-  setMotorLeft(true, false);
-  setMotorRight(true, true);
-}
-
-void stopMotors() {
-  digitalWrite(ENA, LOW);
-  digitalWrite(ENB, LOW);
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, LOW);
 }
